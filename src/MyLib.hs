@@ -14,7 +14,6 @@ module MyLib
     readS,
     writeS,
     modifyS,
-    liftIO,
     Component,
     memo,
     effect,
@@ -24,6 +23,7 @@ module MyLib
 where
 
 import Control.Monad (ap)
+import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.IORef (IORef, modifyIORef, newIORef, readIORef, writeIORef)
 
 data SignalData a = SignalData
@@ -33,72 +33,71 @@ data SignalData a = SignalData
 
 newtype Signal a = Signal (IORef (SignalData a))
 
-data Op a where
-  ExprO :: IO a -> Op a
-  MarkO :: Bool -> Op ()
-  ReadO :: Signal a -> Op a
-  WriteO :: a -> Signal a -> Op ()
-  ModifyO :: (a -> a) -> Signal a -> Op ()
+data Op m a where
+  ExprO :: m a -> Op m a
+  MarkO :: Bool -> Op m ()
+  ReadO :: Signal a -> Op m a
+  WriteO :: a -> Signal a -> Op m ()
+  ModifyO :: (a -> a) -> Signal a -> Op m ()
 
-data Scope a where
-  PureS :: a -> Scope a
-  OnceS :: Op a -> Scope a
-  MapS :: (b -> a) -> Scope b -> Scope a
-  BindS :: Scope b -> (b -> Scope a) -> Scope a
+data Scope m a where
+  PureS :: a -> Scope m a
+  OnceS :: Op m a -> Scope m a
+  MapS :: (b -> a) -> Scope m b -> Scope m a
+  BindS :: Scope m b -> (b -> Scope m a) -> Scope m a
 
-instance Functor Scope where
+instance Functor (Scope m) where
   fmap = MapS
 
-instance Applicative Scope where
+instance Applicative (Scope m) where
   pure = PureS
   (<*>) sf sa = BindS sf (`fmap` sa)
 
-instance Monad Scope where
+instance Monad (Scope m) where
   (>>=) = BindS
 
-liftIO :: IO a -> Scope a
-liftIO = OnceS . ExprO
+instance (MonadIO m) => MonadIO (Scope m) where
+  liftIO = OnceS . ExprO . liftIO
 
-mark :: Bool -> Scope ()
+mark :: Bool -> Scope m ()
 mark = OnceS . MarkO
 
-readS :: Signal a -> Scope a
+readS :: Signal a -> Scope m a
 readS = OnceS . ReadO
 
-writeS :: a -> Signal a -> Scope ()
+writeS :: a -> Signal a -> Scope m ()
 writeS val s = OnceS $ WriteO val s
 
-modifyS :: (a -> a) -> Signal a -> Scope ()
+modifyS :: (a -> a) -> Signal a -> Scope m ()
 modifyS val s = OnceS $ ModifyO val s
 
-data Expr a where
-  PureE :: a -> Expr a
-  ScopeE :: Scope a -> Maybe a -> IORef Bool -> Expr a
+data Expr m a where
+  PureE :: a -> Expr m a
+  ScopeE :: Scope m a -> Maybe a -> IORef Bool -> Expr m a
 
-instance Functor Expr where
+instance Functor (Expr m) where
   fmap f (PureE a) = PureE $ f a
   fmap f (ScopeE s cached b) = ScopeE (fmap f s) (fmap f cached) b
 
-instance Applicative Expr where
+instance Applicative (Expr m) where
   pure = PureE
   (<*>) = ap
 
 -- TODO cache?
-instance Monad Expr where
+instance Monad (Expr m) where
   PureE a >>= f = f a
   ScopeE s _ ref >>= f = ScopeE (s >>= runExpr . f) Nothing ref
     where
-      runExpr :: Expr a -> Scope a
       runExpr (PureE a) = return a
       runExpr (ScopeE s' _ _) = s'
 
-compile :: Scope a -> IO (Expr a)
+compile :: Scope IO a -> IO (Expr IO a)
 compile (PureS s) = return $ PureE s
 compile s = do
   b <- newIORef False
   return $ ScopeE s Nothing b
 
-run :: Expr a -> IO (a, Expr a)
+run :: Expr IO a -> IO (a, Expr IO a)
 run (PureE e) = return (e, PureE e)
 run (ScopeE s cached b) = do
   case cached of
@@ -113,7 +112,7 @@ run (ScopeE s cached b) = do
       out <- runScope s b
       return (out, ScopeE s (Just out) b)
 
-runScope :: Scope a -> IORef Bool -> IO a
+runScope :: Scope IO a -> IORef Bool -> IO a
 runScope (PureS s) _ = return s
 runScope (OnceS s) isReadyRef = runOp s isReadyRef
 runScope (MapS f s) isReadyRef = f <$> runScope s isReadyRef
@@ -121,27 +120,28 @@ runScope (BindS s f) isReadyRef = do
   b <- runScope s isReadyRef
   runScope (f b) isReadyRef
 
-runOp :: Op a -> IORef Bool -> IO a
+runOp :: (MonadIO m) => Op m a -> IORef Bool -> m a
 runOp (ExprO o) _ = o
-runOp (MarkO b) isReadyRef = writeIORef isReadyRef b
+runOp (MarkO b) isReadyRef = liftIO $ writeIORef isReadyRef b
 runOp (ReadO (Signal s)) b = do
-  modifyIORef s (\d -> d {subscribersSD = subscribersSD d ++ [b]})
-  valueSD <$> readIORef s
+  liftIO $ modifyIORef s (\d -> d {subscribersSD = subscribersSD d ++ [b]})
+  liftIO $ valueSD <$> readIORef s
 runOp (WriteO val (Signal s)) _ = do
-  d <- readIORef s
-  mapM_ (`writeIORef` True) (subscribersSD d)
-  modifyIORef s (\v -> v {valueSD = val})
+  d <- liftIO $ readIORef s
+  liftIO $ mapM_ (`writeIORef` True) (subscribersSD d)
+  liftIO $ modifyIORef s (\v -> v {valueSD = val})
 runOp (ModifyO f (Signal s)) b = do
-  modifyIORef
-    s
-    ( \v ->
-        v
-          { valueSD = f $ valueSD v,
-            subscribersSD = subscribersSD v ++ [b]
-          }
-    )
-  d <- readIORef s
-  mapM_ (`writeIORef` True) (subscribersSD d)
+  liftIO $
+    modifyIORef
+      s
+      ( \v ->
+          v
+            { valueSD = f $ valueSD v,
+              subscribersSD = subscribersSD v ++ [b]
+            }
+      )
+  d <- liftIO $ readIORef s
+  liftIO $ mapM_ (`writeIORef` True) (subscribersSD d)
 
 data ComponentOp a where
   ExprCO :: IO a -> ComponentOp a
@@ -156,8 +156,8 @@ runComponentOp (SignalCO val) = do
 data Component a where
   PureC :: a -> Component a
   OnceC :: ComponentOp a -> Component a
-  EffectC :: Scope () -> Component ()
-  MemoC :: Scope a -> Component (Signal a)
+  EffectC :: Scope IO () -> Component ()
+  MemoC :: Scope IO a -> Component (Signal a)
   MapC :: (b -> a) -> Component b -> Component a
   BindC :: Component b -> (b -> Component a) -> Component a
 
@@ -174,16 +174,16 @@ instance Monad Component where
 liftIOC :: IO a -> Component a
 liftIOC = OnceC . ExprCO
 
-effect :: Scope () -> Component ()
+effect :: Scope IO () -> Component ()
 effect = EffectC
 
-memo :: Scope a -> Component (Signal a)
+memo :: Scope IO a -> Component (Signal a)
 memo = MemoC
 
 signal :: a -> Component (Signal a)
 signal = OnceC . SignalCO
 
-runC :: Component a -> IO (a, [Expr ()])
+runC :: Component a -> IO (a, [Expr IO ()])
 runC (PureC a) = return (a, [])
 runC (OnceC a) = do
   a' <- runComponentOp a

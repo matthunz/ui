@@ -7,6 +7,7 @@
 module Main where
 
 import MyLib
+import Control.Monad.IO.Class (liftIO)
 
 main :: IO ()
 main = do
