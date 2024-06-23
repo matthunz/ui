@@ -16,7 +16,7 @@ main = do
   xs1 <- mapM (\(_, expr) -> run expr) exprs
   mapM_ (\(_, expr) -> run expr) xs1
 
-app :: Component ()
+app :: Component IO ()
 app = do
   x <- signal (0 :: Int)
   x' <- memo $ do
