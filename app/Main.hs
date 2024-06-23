@@ -6,15 +6,18 @@ import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 
 main :: IO ()
 main = do
-  expr1 <- compile app
-  ((), expr2) <- run expr1
-  _ <- run expr2
-  return ()
+  (_, effects) <- runC app
+  mapM_ run effects
 
-app :: Scope ()
+app :: Component ()
 app = do
-  mark True
-  liftIO $ print "A"
+  liftIOC $ print "A"
+
+  _ <- effect $ do
+    liftIO $ print "B"
+
+  effect $ do
+    liftIO $ print "C"
 
 data Op a where
   ExprO :: IO a -> Op a
@@ -78,3 +81,45 @@ runScope (BindS s f) isReadyRef = do
 runOp :: Op a -> IORef Bool -> IO a
 runOp (ExprO o) _ = o
 runOp (MarkO b) isReadyRef = writeIORef isReadyRef b
+
+data Component a where
+  PureC :: a -> Component a
+  OnceC :: IO a -> Component a
+  EffectC :: Scope () -> Component ()
+  MapC :: (b -> a) -> Component b -> Component a
+  BindC :: Component b -> (b -> Component a) -> Component a
+
+instance Functor Component where
+  fmap = MapC
+
+instance Applicative Component where
+  pure = PureC
+  (<*>) cf c = BindC cf (`fmap` c)
+
+instance Monad Component where
+  (>>=) = BindC
+
+liftIOC :: IO a -> Component a
+liftIOC = OnceC
+
+effect :: Scope () -> Component ()
+effect = EffectC
+
+runC :: Component a -> IO (Maybe a, [Expr ()])
+runC (PureC a) = return (Just a, [])
+runC (OnceC a) = do
+  a' <- a
+  return (Just a', [])
+runC (EffectC s) = do
+  e <- compile s
+  return (Just (), [e])
+runC (MapC f c) = do
+  (mb, exprs) <- runC c
+  return (f <$> mb, exprs)
+runC (BindC c f) = do
+  (mb, exprs) <- runC c
+  case mb of
+    Nothing -> return (Nothing, exprs)
+    Just b -> do
+      (ma, exprs') <- runC (f b)
+      return (ma, exprs ++ exprs')
