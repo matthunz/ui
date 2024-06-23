@@ -1,10 +1,9 @@
+{-# LANGUAGE GADTs #-}
+
 -- |
 -- Module      : Main
 -- Copyright   : (c) 2024 the ui authors
 -- License     : Apache-2.0
-
-{-# LANGUAGE GADTs #-}
-
 module Main where
 
 import Data.IORef (IORef, modifyIORef, newIORef, readIORef, writeIORef)
@@ -151,21 +150,18 @@ effect = EffectC
 signal :: a -> Component (Signal a)
 signal = OnceC . SignalCO
 
-runC :: Component a -> IO (Maybe a, [Expr ()])
-runC (PureC a) = return (Just a, [])
+runC :: Component a -> IO (a, [Expr ()])
+runC (PureC a) = return (a, [])
 runC (OnceC a) = do
   a' <- runComponentOp a
-  return (Just a', [])
+  return (a', [])
 runC (EffectC s) = do
   e <- compile s
-  return (Just (), [e])
+  return ((), [e])
 runC (MapC f c) = do
-  (mb, exprs) <- runC c
-  return (f <$> mb, exprs)
+  (b, exprs) <- runC c
+  return (f  b, exprs)
 runC (BindC c f) = do
-  (mb, exprs) <- runC c
-  case mb of
-    Nothing -> return (Nothing, exprs)
-    Just b -> do
-      (ma, exprs') <- runC (f b)
-      return (ma, exprs ++ exprs')
+  (b, exprs) <- runC c
+  (a, exprs') <- runC (f b)
+  return (a, exprs ++ exprs')
