@@ -6,6 +6,7 @@
 -- License     : Apache-2.0
 module Main where
 
+import Control.Monad (ap)
 import Data.IORef (IORef, modifyIORef, newIORef, readIORef, writeIORef)
 
 main :: IO ()
@@ -18,9 +19,12 @@ main = do
 app :: Component ()
 app = do
   x <- signal (0 :: Int)
+  x' <- memo $ do
+    n <- readS x
+    return $ n * 2
 
   effect $ do
-    n <- readS x
+    n <- readS x'
     liftIO $ print n
 
   effect $ do
@@ -73,6 +77,23 @@ writeS val s = OnceS $ WriteO val s
 data Expr a where
   PureE :: a -> Expr a
   ScopeE :: Scope a -> Maybe a -> IORef Bool -> Expr a
+
+instance Functor Expr where
+  fmap f (PureE a) = PureE $ f a
+  fmap f (ScopeE s cached b) = ScopeE (fmap f s) (fmap f cached) b
+
+instance Applicative Expr where
+  pure = PureE
+  (<*>) = ap
+
+instance Monad Expr where
+  return = PureE
+  PureE a >>= f = f a
+  ScopeE s cached ref >>= f = ScopeE (s >>= runExpr . f) Nothing ref
+    where
+      runExpr :: Expr a -> Scope a
+      runExpr (PureE a) = return a
+      runExpr (ScopeE s' cached' ref') = s'
 
 compile :: Scope a -> IO (Expr a)
 compile (PureS s) = return $ PureE s
@@ -128,6 +149,7 @@ data Component a where
   PureC :: a -> Component a
   OnceC :: ComponentOp a -> Component a
   EffectC :: Scope () -> Component ()
+  MemoC :: Scope a -> Component (Signal a)
   MapC :: (b -> a) -> Component b -> Component a
   BindC :: Component b -> (b -> Component a) -> Component a
 
@@ -147,6 +169,9 @@ liftIOC = OnceC . ExprCO
 effect :: Scope () -> Component ()
 effect = EffectC
 
+memo :: Scope a -> Component (Signal a)
+memo = MemoC
+
 signal :: a -> Component (Signal a)
 signal = OnceC . SignalCO
 
@@ -158,9 +183,20 @@ runC (OnceC a) = do
 runC (EffectC s) = do
   e <- compile s
   return ((), [e])
+runC (MemoC s) = do
+  e <- compile s
+  (a, e2) <- run e
+  let c = do
+        sig <- signal a
+        effect $ do
+          a2 <- s
+          writeS a2 sig
+        return sig
+  (sig, e3) <- runC c
+  return (sig, e3)
 runC (MapC f c) = do
   (b, exprs) <- runC c
-  return (f  b, exprs)
+  return (f b, exprs)
 runC (BindC c f) = do
   (b, exprs) <- runC c
   (a, exprs') <- runC (f b)
