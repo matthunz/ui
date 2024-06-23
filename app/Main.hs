@@ -26,6 +26,4 @@ app = do
     n <- readS x'
     liftIO $ print n
 
-  effect $ do
-    n <- readS x
-    writeS (n + 1) x
+  effect $ modifyS (+ 1) x

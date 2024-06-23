@@ -13,6 +13,7 @@ module MyLib
     signal,
     readS,
     writeS,
+    modifyS,
     liftIO,
     Component,
     memo,
@@ -37,6 +38,7 @@ data Op a where
   MarkO :: Bool -> Op ()
   ReadO :: Signal a -> Op a
   WriteO :: a -> Signal a -> Op ()
+  ModifyO :: (a -> a) -> Signal a -> Op ()
 
 data Scope a where
   PureS :: a -> Scope a
@@ -65,6 +67,9 @@ readS = OnceS . ReadO
 
 writeS :: a -> Signal a -> Scope ()
 writeS val s = OnceS $ WriteO val s
+
+modifyS :: (a -> a) -> Signal a -> Scope ()
+modifyS val s = OnceS $ ModifyO val s
 
 data Expr a where
   PureE :: a -> Expr a
@@ -126,6 +131,17 @@ runOp (WriteO val (Signal s)) _ = do
   d <- readIORef s
   mapM_ (`writeIORef` True) (subscribersSD d)
   modifyIORef s (\v -> v {valueSD = val})
+runOp (ModifyO f (Signal s)) b = do
+  modifyIORef
+    s
+    ( \v ->
+        v
+          { valueSD = f $ valueSD v,
+            subscribersSD = subscribersSD v ++ [b]
+          }
+    )
+  d <- readIORef s
+  mapM_ (`writeIORef` True) (subscribersSD d)
 
 data ComponentOp a where
   ExprCO :: IO a -> ComponentOp a
