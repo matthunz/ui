@@ -1,3 +1,8 @@
+-- |
+-- Module      : Main
+-- Copyright   : (c) 2024 the ui authors
+-- License     : Apache-2.0
+
 {-# LANGUAGE GADTs #-}
 
 module Main where
@@ -15,7 +20,7 @@ app :: Component ()
 app = do
   x <- signal (0 :: Int)
 
-  _ <- effect $ do
+  effect $ do
     n <- readS x
     liftIO $ print n
 
