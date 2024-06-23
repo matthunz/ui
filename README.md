@@ -1,5 +1,5 @@
 ```hs
-app :: Component ()
+app :: Component IO ()
 app = do
   x <- signal (0 :: Int)
   x' <- memo $ do
