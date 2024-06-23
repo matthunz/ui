@@ -2,26 +2,41 @@
 
 module Main where
 
-import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.IORef (IORef, modifyIORef, newIORef, readIORef, writeIORef)
 
 main :: IO ()
 main = do
   (_, effects) <- runC app
-  mapM_ run effects
+  exprs <- mapM run effects
+  xs1 <- mapM (\(_, expr) -> run expr) exprs
+  mapM_ (\(_, expr) -> run expr) xs1
 
 app :: Component ()
 app = do
-  liftIOC $ print "A"
+  x <- signal (0 :: Int)
 
   _ <- effect $ do
-    liftIO $ print "B"
+    n <- readS x
+    liftIO $ print n
 
   effect $ do
-    liftIO $ print "C"
+    n <- readS x
+    writeS (n + 1) x
+
+data SignalData a = SignalData
+  { valueSD :: a,
+    subscribersSD :: [IORef Bool]
+  }
+
+newtype Signal a = Signal
+  { unSignal :: IORef (SignalData a)
+  }
 
 data Op a where
   ExprO :: IO a -> Op a
   MarkO :: Bool -> Op ()
+  ReadO :: Signal a -> Op a
+  WriteO :: a -> Signal a -> Op ()
 
 data Scope a where
   PureS :: a -> Scope a
@@ -44,6 +59,12 @@ liftIO = OnceS . ExprO
 
 mark :: Bool -> Scope ()
 mark = OnceS . MarkO
+
+readS :: Signal a -> Scope a
+readS = OnceS . ReadO
+
+writeS :: a -> Signal a -> Scope ()
+writeS val s = OnceS $ WriteO val s
 
 data Expr a where
   PureE :: a -> Expr a
@@ -81,10 +102,27 @@ runScope (BindS s f) isReadyRef = do
 runOp :: Op a -> IORef Bool -> IO a
 runOp (ExprO o) _ = o
 runOp (MarkO b) isReadyRef = writeIORef isReadyRef b
+runOp (ReadO (Signal s)) b = do
+  modifyIORef s (\d -> d {subscribersSD = subscribersSD d ++ [b]})
+  valueSD <$> readIORef s
+runOp (WriteO val (Signal s)) _ = do
+  d <- readIORef s
+  mapM_ (`writeIORef` True) (subscribersSD d)
+  modifyIORef s (\v -> v {valueSD = val})
+
+data ComponentOp a where
+  ExprCO :: IO a -> ComponentOp a
+  SignalCO :: a -> ComponentOp (Signal a)
+
+runComponentOp :: ComponentOp a -> IO a
+runComponentOp (ExprCO io) = io
+runComponentOp (SignalCO val) = do
+  r <- newIORef SignalData {valueSD = val, subscribersSD = []}
+  return $ Signal r
 
 data Component a where
   PureC :: a -> Component a
-  OnceC :: IO a -> Component a
+  OnceC :: ComponentOp a -> Component a
   EffectC :: Scope () -> Component ()
   MapC :: (b -> a) -> Component b -> Component a
   BindC :: Component b -> (b -> Component a) -> Component a
@@ -100,15 +138,18 @@ instance Monad Component where
   (>>=) = BindC
 
 liftIOC :: IO a -> Component a
-liftIOC = OnceC
+liftIOC = OnceC . ExprCO
 
 effect :: Scope () -> Component ()
 effect = EffectC
 
+signal :: a -> Component (Signal a)
+signal = OnceC . SignalCO
+
 runC :: Component a -> IO (Maybe a, [Expr ()])
 runC (PureC a) = return (Just a, [])
 runC (OnceC a) = do
-  a' <- a
+  a' <- runComponentOp a
   return (Just a', [])
 runC (EffectC s) = do
   e <- compile s
