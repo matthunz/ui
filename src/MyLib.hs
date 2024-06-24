@@ -11,6 +11,9 @@ module MyLib
     Expr,
     run,
     Signal,
+    readSIO,
+    writeSIO,
+    modifySIO,
     signal,
     readS,
     writeS,
@@ -32,6 +35,16 @@ data SignalData a = SignalData
   }
 
 newtype Signal a = Signal (IORef (SignalData a))
+
+readSIO :: Signal a -> IO a
+readSIO (Signal b) = valueSD <$> readIORef b
+
+writeSIO :: a -> Signal a -> IO ()
+writeSIO val (Signal s) = modifyIORef s (\d -> d {valueSD = val})
+
+modifySIO :: (a -> a)-> Signal a -> IO ()
+modifySIO f (Signal s) = modifyIORef s (\d -> d {valueSD = f $ valueSD d})
+
 
 data Op m a where
   ExprO :: m a -> Op m a

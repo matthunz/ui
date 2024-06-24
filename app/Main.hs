@@ -31,7 +31,9 @@ app = _component $ do
 
   return $
     _div
-      [("class", pure "main")]
+      [ ("class", _attr $ pure "main"),
+        ("click", _on $ modifySIO (+ 1) x)
+      ]
       [ _text $ do
           x' <- readS x
           s' <- readS s
