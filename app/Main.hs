@@ -6,25 +6,30 @@
 -- License     : Apache-2.0
 module Main where
 
-import MyLib
 import Control.Monad.IO.Class (liftIO)
+import MyLib
 
 main :: IO ()
 main = do
-  (_, effects) <- runC app
-  exprs <- mapM run effects
-  xs1 <- mapM (\(_, expr) -> run expr) exprs
-  mapM_ (\(_, expr) -> run expr) xs1
+  html <- compileHtml app
+  out <- runHtml html
+  return ()
 
-app :: Component IO ()
-app = do
+app :: Html IO
+app = _component $ do
   x <- signal (0 :: Int)
-  x' <- memo $ do
-    n <- readS x
-    return $ n * 2
 
-  effect $ do
-    n <- readS x'
-    liftIO $ print n
+  s <- memo $ do
+    x' <- readS x
+    return $ x' + 1
 
-  effect $ modifyS (+ 1) x
+  effect $ writeS 1 x
+
+  return $
+    _div
+      []
+      [ _text $ do
+          x' <- readS x
+          s' <- readS s
+          return $ show x' ++ "+ 1 =" ++ show s'
+      ]

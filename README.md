@@ -1,14 +1,20 @@
 ```hs
-app :: Component IO ()
-app = do
+app :: Html IO
+app = _component $ do
   x <- signal (0 :: Int)
-  x' <- memo $ do
-    n <- readS x
-    return $ n * 2
 
-  effect $ do
-    n <- readS x'
-    liftIO $ print n
+  s <- memo $ do
+    x' <- readS x
+    return $ x' + 1
 
-  effect $ modifyS (+ 1) x
+  effect $ writeS 1 x
+
+  return $
+    _div
+      []
+      [ _text $ do
+          x' <- readS x
+          s' <- readS s
+          return $ show x' ++ "+ 1 =" ++ show s'
+      ]
 ```
