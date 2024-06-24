@@ -25,8 +25,8 @@ data HtmlAttribute m = HtmlTextAttribute (Scope m String) | Handler (m ())
 _attr :: Scope m String -> HtmlAttribute m
 _attr = HtmlTextAttribute
 
-_on :: m () -> HtmlAttribute m
-_on = Handler
+_on :: String -> m () -> (String, HtmlAttribute m)
+_on n f = (n, Handler f)
 
 data Html m
   = HtmlElement String [(String, HtmlAttribute m)] [Html m]

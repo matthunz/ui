@@ -13,7 +13,7 @@ import MyLib
 
 main :: IO ()
 main = do
-  html <- compileHtml app
+  html <- compileHtml counter
 
   (out, html2) <- runHtml html
   print out
@@ -21,21 +21,20 @@ main = do
   (out, _) <- runHtml html2
   print out
 
-app :: Html IO
-app = _component $ do
+counter :: Html IO
+counter = _component $ do
   x <- signal (0 :: Int)
-
-  s <- memo $ readS x <&> (+ 1)
-
-  effect $ writeS 1 x
 
   return $
     _div
-      [ ("class", _attr $ pure "main"),
-        ("click", _on $ modifySIO (+ 1) x)
-      ]
+      [("class", _attr $ pure "main")]
       [ _text $ do
           x' <- readS x
-          s' <- readS s
-          return $ show x' ++ " + 1 = " ++ show s'
+          return $ "High five count: " ++ show x',
+        _div
+          [_on "click" (modifySIO (+ 1) x)]
+          [_text $ pure "Up high!"],
+        _div
+          [_on "click" (modifySIO ((-) 1) x)]
+          [_text $ pure "Down low!"]
       ]
