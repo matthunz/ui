@@ -7,6 +7,7 @@
 module MyLib
   ( Scope,
     mark,
+    compile,
     Expr,
     run,
     Signal,
@@ -18,12 +19,6 @@ module MyLib
     memo,
     effect,
     runC,
-    Html,
-    compileHtml,
-    runHtml,
-    _component,
-    _div,
-    _text,
   )
 where
 
@@ -214,60 +209,3 @@ runC (BindC c f) = do
   (b, exprs) <- runC c
   (a, exprs') <- runC (f b)
   return (a, exprs ++ exprs')
-
-data Html m
-  = HtmlElement String [(String, Scope m String)] [Html m]
-  | HtmlText (Scope m String)
-  | HtmlComponent (Component m (Html m))
-
-_component :: Component m (Html m) -> Html m
-_component = HtmlComponent
-
-_div :: [(String, Scope m String)] -> [Html m] -> Html m
-_div = HtmlElement "div"
-
-_text :: Scope m String -> Html m
-_text = HtmlText
-
-data HtmlExpr m
-  = HtmlComponentExpr [Expr m ()] (HtmlExpr m)
-  | HtmlElementExpr String [(String, Expr m String)] [HtmlExpr m]
-  | HtmlTextExpr (Expr m String)
-
-compileHtml :: (MonadIO m) => Html m -> m (HtmlExpr m)
-compileHtml html = case html of
-  HtmlComponent c -> do
-    (html2, effects) <- runC c
-    e <- compileHtml html2
-    return $ HtmlComponentExpr effects e
-  HtmlElement tag attrs children -> do
-    attrs' <-
-      mapM
-        ( \(n, v) -> do
-            v' <- compile v
-            return (n, v')
-        )
-        attrs
-    children' <- mapM compileHtml children
-    return $ HtmlElementExpr tag attrs' children'
-  HtmlText s -> fmap HtmlTextExpr (compile s)
-
-runHtml :: (MonadIO m) => HtmlExpr m -> m (HtmlExpr m)
-runHtml html = case html of
-  HtmlComponentExpr effects content -> do
-    effects2 <- mapM (fmap snd . run) effects
-    content2 <- runHtml content
-    return $ HtmlComponentExpr effects2 content2
-  HtmlElementExpr tag attrs children -> do
-    attrs2 <-
-      mapM
-        ( \(n, v) -> do
-            (_, e) <- run v
-            return (n, e)
-        )
-        attrs
-    children2 <- mapM runHtml children
-    return $ HtmlElementExpr tag attrs2 children2
-  HtmlTextExpr e -> do
-    (content, e2) <- run e
-    return $ HtmlTextExpr e2
